@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Weather Arc</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Inter font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        /* Set the Inter font as the default */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        /* Custom style for the reflection effect */
+        .reflection {
+            position: relative;
+        }
+
+        .reflection::after {
+            content: attr(data-reflection); /* Use data-reflection attribute for content */
+            position: absolute;
+            bottom: -100%; /* Position it right below the text */
+            left: 0;
+            width: 100%;
+            transform: scaleY(-1); /* Flip it vertically */
+            opacity: 0.25; /* Make it semi-transparent */
+            /* Create a gradient mask to fade it out */
+            mask-image: linear-gradient(to bottom, rgba(0,0,0,1), rgba(0,0,0,0) 80%);
+            -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,1), rgba(0,0,0,0) 80%);
+        }
+
+        /* Ensure the handle is above the arc's border */
+        #handle {
+            z-index: 10;
+        }
+    </style>
+</head>
+<body class="bg-gray-200 flex items-center justify-center min-h-screen overflow-hidden">
+
+    <!-- Main Widget Container -->
+    <div id="weather-widget" class="w-full max-w-2xl p-4 md:p-8">
+        
+        <!-- Arc Container: This holds the arc and the handle -->
+        <div id="arc-container" class="relative w-full">
+            
+            <!-- The Arc: 
+                 A div styled to be a responsive semi-circle.
+                 We use padding-top: 50% to maintain a 2:1 aspect ratio (width:height).
+                 The handle's position will be calculated relative to this element.
+            -->
+            <div id="arc" class="w-full" style="padding-top: 50%;">
+                <!-- The visible border of the arc -->
+                <div class="absolute inset-0 rounded-b-full border-b-[3px] border-gray-900"></div>
+            </div>
+            
+            <!-- The Handle (Blue Ball) -->
+            <div id="handle" class="absolute w-6 h-6 md:w-8 md:h-8 bg-blue-500 rounded-full shadow-lg cursor-pointer border-2 border-white" style="top: 0; left: 0; transform: translate(-50%, -50%);">
+                <!-- Inner dot for aesthetics -->
+                <div class="w-full h-full flex items-center justify-center">
+                    <div class="w-2 h-2 bg-blue-200 rounded-full opacity-75"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Stats Display Container -->
+        <div id="stats-container" class="relative text-center -mt-[20%] md:-mt-[15%]">
+            <div id="time" class="text-xl md:text-2xl font-bold text-gray-800 mb-6 md:mb-10">
+                06:00
+            </div>
+            <div class="grid grid-cols-3 gap-4 px-4">
+                <!-- We use data-reflection to store the text for the ::after pseudo-element -->
+                <div id="location-temp" class="reflection text-lg md:text-xl font-semibold text-gray-700" data-reflection="Location 25°C">
+                    Location 25°C
+                </div>
+                <div id="wind" class="reflection text-lg md:text-xl font-semibold text-gray-700" data-reflection="Wind 4 km/h">
+                    Wind 4 km/h
+                </div>
+                <div id="humidity" class="reflection text-lg md:text-xl font-semibold text-gray-700" data-reflection="Humidity 60%">
+                    Humidity 60%
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // Mock weather data for different times of the day (13 points, from 6:00 to 18:00)
+        const weatherData = [
+            { time: "06:00", temp: 18, wind: 2, humidity: 75 },
+            { time: "07:00", temp: 19, wind: 2, humidity: 72 },
+            { time: "08:00", temp: 20, wind: 3, humidity: 70 },
+            { time: "09:00", temp: 22, wind: 3, humidity: 68 },
+            { time: "10:00", temp: 23, wind: 4, humidity: 65 },
+            { time: "11:00", temp: 24, wind: 4, humidity: 62 },
+            { time: "12:00", temp: 25, wind: 5, humidity: 60 },
+            { time: "13:00", temp: 26, wind: 5, humidity: 58 },
+            { time: "14:00", temp: 26, wind: 4, humidity: 59 },
+            { time: "15:00", temp: 25, wind: 4, humidity: 61 },
+            { time: "16:00", temp: 24, wind: 3, humidity: 63 },
+            { time: "17:00", temp: 22, wind: 3, humidity: 67 },
+            { time: "18:00", temp: 20, wind: 2, humidity: 70 }
+        ];
+
+        // DOM Element References
+        const arc = document.getElementById('arc');
+        const handle = document.getElementById('handle');
+        const timeEl = document.getElementById('time');
+        const tempEl = document.getElementById('location-temp');
+        const windEl = document.getElementById('wind');
+        const humidityEl = document.getElementById('humidity');
+
+        let isDragging = false;
+
+        // --- Event Listeners ---
+
+        // Mouse events
+        handle.addEventListener('mousedown', startDrag);
+        document.addEventListener('mousemove', drag);
+        document.addEventListener('mouseup', stopDrag);
+
+        // Touch events
+        handle.addEventListener('touchstart', startDrag);
+        document.addEventListener('touchmove', drag);
+        document.addEventListener('touchend', stopDrag);
+        
+        // Update on resize
+        window.addEventListener('resize', () => {
+            // Recalculate position based on current percentage
+            const currentPercent = getPercentFromHandle();
+            updatePositionByPercent(currentPercent);
+        });
+
+        // --- Drag Functions ---
+
+        function startDrag(e) {
+            isDragging = true;
+            handle.classList.add('scale-125'); // Add visual feedback
+            // Prevent default touch behavior (like scrolling)
+            if (e.type === 'touchstart') {
+                e.preventDefault();
+            }
+        }
+
+        function stopDrag() {
+            if (!isDragging) return;
+            isDragging = false;
+            handle.classList.remove('scale-125'); // Remove visual feedback
+        }
+
+        function drag(e) {
+            if (!isDragging) return;
+            
+            // Get the correct clientX for both mouse and touch events
+            const clientX = e.type === 'touchmove' ? e.touches[0].clientX : e.clientX;
+            
+            // Update position and stats
+            updatePositionAndStats(clientX);
+        }
+
+        // --- Core Logic ---
+
+        /**
+         * Updates the handle position and stats based on the cursor's X coordinate.
+         */
+        function updatePositionAndStats(clientX) {
+            const arcRect = arc.getBoundingClientRect();
+            const radius = arcRect.width / 2;
+            const arcCenterX = arcRect.left + radius;
+
+            // 1. Clamp the cursor's X position to be within the arc's bounds
+            const clampedX = Math.max(arcRect.left, Math.min(clientX, arcRect.right));
+            
+            // 2. Calculate X relative to the arc's center (from -radius to +radius)
+            const xRel = clampedX - arcCenterX;
+            
+            // 3. Use the circle equation (x^2 + y^2 = r^2) to find Y
+            // y^2 = r^2 - x^2
+            // We use Math.max to prevent sqrt of negative numbers from floating point errors
+            const ySquared = (radius * radius) - (xRel * xRel);
+            const y = Math.sqrt(Math.max(0, ySquared));
+            
+            // 4. Calculate the CSS top and left positions
+            // CSS top is relative to the arc's top (the diameter line)
+            // We subtract y from radius to get the position from the top
+            const cssTop = radius - y;
+            // CSS left is relative to the arc's left edge
+            const cssLeft = clampedX - arcRect.left;
+
+            handle.style.top = `${cssTop}px`;
+            handle.style.left = `${cssLeft}px`;
+
+            // 5. Calculate the percentage (0.0 to 1.0) along the arc
+            const percent = (clampedX - arcRect.left) / arcRect.width;
+
+            // 6. Update the stats display
+            updateStats(percent);
+        }
+        
+        /**
+         * Updates the handle position given a percentage (0.0 to 1.0).
+         * Used for initialization and resize.
+         */
+        function updatePositionByPercent(percent) {
+            const arcRect = arc.getBoundingClientRect();
+            const radius = arcRect.width / 2;
+
+            // 1. Calculate the clampedX from the percentage
+            const clampedX = arcRect.left + (arcRect.width * percent);
+
+            // 2. Calculate X relative to the arc's center
+            const xRel = clampedX - (arcRect.left + radius);
+            
+            // 3. Find Y using the circle equation
+            const ySquared = (radius * radius) - (xRel * xRel);
+            const y = Math.sqrt(Math.max(0, ySquared));
+
+            // 4. Calculate CSS positions
+            const cssTop = radius - y;
+            const cssLeft = clampedX - arcRect.left;
+
+            handle.style.top = `${cssTop}px`;
+            handle.style.left = `${cssLeft}px`;
+
+            // 5. Update stats
+            updateStats(percent);
+        }
+
+        /**
+         * Updates the text and reflection data based on the percentage.
+         */
+        function updateStats(percent) {
+            // Find the closest data point
+            const index = Math.round(percent * (weatherData.length - 1));
+            const data = weatherData[index];
+
+            // Format the strings
+            const timeStr = data.time;
+            const tempStr = `Location ${data.temp}°C`;
+            const windStr = `Wind ${data.wind} km/h`;
+            const humidityStr = `Humidity ${data.humidity}%`;
+
+            // Update the text content
+            timeEl.textContent = timeStr;
+            tempEl.textContent = tempStr;
+            windEl.textContent = windStr;
+            humidityEl.textContent = humidityStr;
+
+            // Update the data-reflection attribute for the CSS pseudo-element
+            tempEl.setAttribute('data-reflection', tempStr);
+            windEl.setAttribute('data-reflection', windStr);
+            humidityEl.setAttribute('data-reflection', humidityStr);
+        }
+        
+        /**
+         * Gets the current handle position as a percentage.
+         * Used for the resize handler.
+         */
+        function getPercentFromHandle() {
+            const arcRect = arc.getBoundingClientRect();
+            const handleRect = handle.getBoundingClientRect();
+            
+            // Get handle's center X relative to the viewport
+            const handleCenterX = handleRect.left + (handleRect.width / 2);
+            
+            // Calculate percentage
+            let percent = (handleCenterX - arcRect.left) / arcRect.width;
+            return Math.max(0, Math.min(1, percent)); // Clamp between 0 and 1
+        }
+
+        // --- Initial Setup ---
+        // Set the initial position (e.g., at 25%, which corresponds to the image)
+        updatePositionByPercent(0.25); 
+
+    </script>
+</body>
+</html>
